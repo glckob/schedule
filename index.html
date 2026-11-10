@@ -1,0 +1,1737 @@
+<!DOCTYPE html>
+<html lang="km">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>កាលវិភាគវិទ្យាល័យកូប</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
+    <!-- បន្ថែម Firebase Modules នៅទីនេះ -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, EmailAuthProvider, reauthenticateWithCredential } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // បញ្ជូនវាទៅ window ដើម្បីអាចប្រើក្នុង React (Babel) បាន
+        window.FirebaseAPI = { initializeApp, getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, EmailAuthProvider, reauthenticateWithCredential, getFirestore, doc, setDoc, getDoc };
+    </script>
+
+    <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@300;400;500;600;700&family=Moul&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Kantumruy Pro', 'Siemreap', sans-serif; background-color: #f3f4f6; }
+        .font-khmer-muol { font-family: 'Moul', cursive; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        @media print {
+            @page { size: A4 landscape; margin: 10mm; }
+            .no-print { display: none !important; }
+            body, .bg-gray-100, .bg-white { background: white !important; }
+            .print-overflow-visible { overflow: visible !important; }
+            .print-border-black th, .print-border-black td { border-color: #000 !important; }
+            table { font-size: 11pt; }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const WEEK_DAYS = ['ច័ន្ទ', 'អង្គារ', 'ពុធ', 'ព្រហស្បតិ៍', 'សុក្រ', 'សៅរ៍'];
+        const DAYS = ['ច័ន្ទ - ព្រឹក', 'ច័ន្ទ - ល្ងាច', 'អង្គារ - ព្រឹក', 'អង្គារ - ល្ងាច', 'ពុធ - ព្រឹក', 'ពុធ - ល្ងាច', 'ព្រហស្បតិ៍ - ព្រឹក', 'ព្រហស្បតិ៍ - ល្ងាច', 'សុក្រ - ព្រឹក', 'សុក្រ - ល្ងាច', 'សៅរ៍ - ព្រឹក'];
+        
+        // Added 'time' property to match the template
+        const SLOTS = [
+            { id: 'm1', name: 'ម៉ោង ៧:០០ - ៨:០០', type: 'Morning', time: '០៧-០៨' },
+            { id: 'm2', name: 'ម៉ោង ៨:០០ - ៩:០០', type: 'Morning', time: '០៨-០៩' },
+            { id: 'm3', name: 'ម៉ោង ៩:០០ - ១០:០០', type: 'Morning', time: '០៩-១០' },
+            { id: 'm4', name: 'ម៉ោង ១០:០០ - ១១:០០', type: 'Morning', time: '១០-១១' },
+            { id: 'a1', name: 'ម៉ោង ១៣:០០ - ១៤:០០', type: 'Afternoon', time: '១៣-១៤' },
+            { id: 'a2', name: 'ម៉ោង ១៤:០០ - ១៥:០០', type: 'Afternoon', time: '១៤-១៥' },
+            { id: 'a3', name: 'ម៉ោង ១៥:០០ - ១៦:០០', type: 'Afternoon', time: '១៥-១៦' }
+        ];
+
+        const MORNING_SLOTS = SLOTS.filter(s => s.type === 'Morning');
+        const AFTERNOON_SLOTS = SLOTS.filter(s => s.type === 'Afternoon');
+
+        const DEFAULT_SUBJECTS = ['គណិតវិទ្យា', 'រូបវិទ្យា', 'គីមីវិទ្យា', 'ជីវវិទ្យា', 'ផែនដីវិទ្យា', 'ភាសាខ្មែរ', 'សីលធម៌', 'ប្រវត្តិវិទ្យា', 'ភូមិវិទ្យា', 'ភាសាអង់គ្លេស', 'កុំព្យូទ័រ', 'កីឡា', 'កសិកម្ម', 'សេដ្ឋកិច្ច', 'ភាសាបារាំង', 'សិល្បៈ', 'អប់រំសុខភាព'];
+
+        // ការកំណត់គម្រោង Firebase របស់អ្នក
+        const firebaseConfig = {
+            apiKey: "AIzaSyD5i1ppcMcyheAeepyuXEfrnIZWNZVz82s",
+            authDomain: "schedule-bc5d1.firebaseapp.com",
+            projectId: "schedule-bc5d1",
+            storageBucket: "schedule-bc5d1.firebasestorage.app",
+            messagingSenderId: "940407397764",
+            appId: "1:940407397764:web:08751ec6b4031ec75991d1",
+            measurementId: "G-VTG50H7JNP"
+        };
+
+        let app, db, auth;
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('teachers');
+            const [teachers, setTeachers] = useState([]);
+            const [classes, setClasses] = useState([]);
+            const [schedules, setSchedules] = useState({});
+            const [allSubjects, setAllSubjects] = useState(DEFAULT_SUBJECTS);
+            const [isLoaded, setIsLoaded] = useState(false);
+            const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+            const [user, setUser] = useState(null);
+            
+            // State សម្រាប់ School Profile
+            const [schoolProfile, setSchoolProfile] = useState({
+                name: 'ឈ្មោះសាលារៀន',
+                department: 'មន្ទីរអប់រំ យុវជន និងកីឡាខេត្ត...',
+                academicYear: '២០២៤ - ២០២៥'
+            });
+            
+            // State សម្រាប់ Login
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
+            const [loginError, setLoginError] = useState('');
+            const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+            // ទាញយកទិន្នន័យពី Firebase Firestore នៅពេលបើកកម្មវិធី
+            useEffect(() => {
+                let unsubscribeAuth = null;
+                let isMounted = true;
+                
+                const initFirebase = () => {
+                    if (window.FirebaseAPI && window.FirebaseAPI.onAuthStateChanged) {
+                        try {
+                            if (!app) {
+                                app = window.FirebaseAPI.initializeApp(firebaseConfig);
+                            }
+                            if (!auth) auth = window.FirebaseAPI.getAuth(app);
+                            if (!db) db = window.FirebaseAPI.getFirestore(app);
+
+                            // ស្តាប់ការផ្លាស់ប្តូរអ្នកប្រើប្រាស់
+                            unsubscribeAuth = window.FirebaseAPI.onAuthStateChanged(auth, async (currentUser) => {
+                                if (!isMounted) return;
+
+                                if (currentUser) {
+                                    // កំណត់ទីតាំងផ្ទុកទិន្នន័យ (ឯកជនសម្រាប់អ្នកប្រើម្នាក់ៗ)
+                                    const appId = "kob_schedule_app"; 
+                                    const docRef = window.FirebaseAPI.doc(db, 'artifacts', appId, 'users', currentUser.uid, 'schoolData', 'main');
+                                    
+                                    try {
+                                        // អានទិន្នន័យតែម្តងពេលបើកកម្មវិធី
+                                        const docSnap = await window.FirebaseAPI.getDoc(docRef);
+                                        if (docSnap.exists()) {
+                                            const data = docSnap.data();
+                                            if (data.teachers) setTeachers(data.teachers);
+                                            if (data.classes) setClasses(data.classes);
+                                            if (data.schedules) setSchedules(data.schedules);
+                                            
+                                            // ជួសជុលបញ្ហាលោតមុខវិជ្ជាមកវិញ
+                                            if (data.allSubjects !== undefined && Array.isArray(data.allSubjects)) {
+                                                setAllSubjects(data.allSubjects); 
+                                            } else {
+                                                setAllSubjects(DEFAULT_SUBJECTS);
+                                            }
+                                            if (data.isSidebarOpen !== undefined) setIsSidebarOpen(data.isSidebarOpen);
+                                            if (data.schoolProfile) setSchoolProfile(data.schoolProfile);
+                                        } else {
+                                             // ប្រសិនបើមិនទាន់មាន Document ទេ នោះទើបបង្កើតថ្មី
+                                             await window.FirebaseAPI.setDoc(docRef, {
+                                                teachers: [],
+                                                classes: [],
+                                                schedules: {},
+                                                allSubjects: DEFAULT_SUBJECTS,
+                                                isSidebarOpen: true,
+                                                schoolProfile: { name: 'ឈ្មោះសាលារៀន', department: 'មន្ទីរអប់រំ យុវជន និងកីឡាខេត្ត...', academicYear: '២០២៤ - ២០២៥' },
+                                                updatedAt: new Date().toISOString()
+                                            });
+                                        }
+                                    } catch (error) {
+                                        console.error("Firestore getDoc Error:", error);
+                                    }
+                                    
+                                    setUser(currentUser);
+                                    // ប្រើ setTimeout ដើម្បីប្រាកដថា State ទាំងអស់ Update ចូលប្រព័ន្ធសិនមុននឹងបើកសិទ្ធិឲ្យ Save
+                                    setTimeout(() => {
+                                        if (isMounted) setIsLoaded(true);
+                                    }, 100);
+                                } else {
+                                    // បើគ្មាន Session ទេ បង្ហាញផ្ទាំង Login
+                                    setUser(null);
+                                    setIsLoaded(true);
+                                }
+                            });
+                        } catch (err) {
+                            console.error("Firebase Config Error:", err);
+                        }
+                    } else {
+                        setTimeout(initFirebase, 100); 
+                    }
+                };
+
+                initFirebase();
+
+                return () => {
+                    isMounted = false;
+                    if (unsubscribeAuth) unsubscribeAuth();
+                };
+            }, []);
+
+            // មុខងារ Login
+            const handleLogin = async (e) => {
+                e.preventDefault();
+                setLoginError('');
+                setIsLoggingIn(true);
+                try {
+                    await window.FirebaseAPI.signInWithEmailAndPassword(auth, email, password);
+                } catch (error) {
+                    console.error("Login Error:", error);
+                    setLoginError('អ៊ីមែល ឬ លេខសម្ងាត់មិនត្រឹមត្រូវទេ។ សូមព្យាយាមម្តងទៀត។');
+                } finally {
+                    setIsLoggingIn(false);
+                }
+            };
+
+            // មុខងារ Logout
+            const handleLogout = () => {
+                if (window.confirm('តើអ្នកពិតជាចង់ចាកចេញមែនទេ?')) {
+                    window.FirebaseAPI.signOut(auth).catch(error => console.error("Logout Error:", error));
+                }
+            };
+
+            // រក្សាទុកទិន្នន័យទៅ Firebase វិញរាល់ពេលមានការផ្លាស់ប្តូរ
+            useEffect(() => {
+                if (!isLoaded || !user || !window.FirebaseAPI) return;
+
+                // ប្រើ Debounce (ពន្យារពេល 0.5s) ដើម្បីការពារកុំឲ្យវា Save ខុសពេលដែលទិន្នន័យកំពុង Load
+                const saveTimer = setTimeout(() => {
+                    const appId = "kob_schedule_app";
+                    const docRef = window.FirebaseAPI.doc(db, 'artifacts', appId, 'users', user.uid, 'schoolData', 'main');
+                    
+                    window.FirebaseAPI.setDoc(docRef, {
+                        teachers,
+                        classes,
+                        schedules,
+                        allSubjects,
+                        isSidebarOpen,
+                        schoolProfile,
+                        updatedAt: new Date().toISOString()
+                    }).catch(err => console.error("Error saving data:", err));
+                }, 500);
+
+                return () => clearTimeout(saveTimer);
+            }, [teachers, classes, schedules, allSubjects, isSidebarOpen, schoolProfile, isLoaded, user]);
+
+            const addTeacher = (teacher) => {
+                setTeachers([...teachers, { ...teacher, id: Date.now().toString() }]);
+            };
+
+            const removeTeacher = (id) => {
+                if (confirm('តើអ្នកពិតជាចង់លុបគ្រូនេះមែនទេ?')) {
+                    setTeachers(teachers.filter(t => t.id !== id));
+                }
+            };
+
+            const addClass = (cls) => {
+                setClasses([...classes, { ...cls, id: Date.now().toString() }]);
+            };
+
+            const removeClass = (id) => {
+                if (confirm('តើអ្នកពិតជាចង់លុបថ្នាក់នេះមែនទេ?')) {
+                    setClasses(classes.filter(c => c.id !== id));
+                    const newSchedules = { ...schedules };
+                    delete newSchedules[id];
+                    setSchedules(newSchedules);
+                }
+            };
+
+            const updateTeacher = (id, updatedTeacher) => {
+                setTeachers(teachers.map(t => t.id === id ? { ...updatedTeacher, id } : t));
+            };
+
+            const updateClass = (id, updatedClass) => {
+                setClasses(classes.map(c => c.id === id ? { ...updatedClass, id } : c));
+            };
+
+            const updateSubject = (oldName, newName) => {
+                if (allSubjects.includes(newName)) {
+                    alert('ឈ្មោះមុខវិជ្ជានេះមានរួចហើយ!');
+                    return;
+                }
+                setAllSubjects(allSubjects.map(s => s === oldName ? newName : s));
+                
+                setTeachers(teachers.map(t => ({
+                    ...t,
+                    subjects: t.subjects ? t.subjects.map(s => s === oldName ? newName : s) : []
+                })));
+                
+                setClasses(classes.map(c => {
+                    const newHours = { ...c.subjectHours };
+                    if (newHours[oldName] !== undefined) {
+                        newHours[newName] = newHours[oldName];
+                        delete newHours[oldName];
+                    }
+                    return { ...c, subjectHours: newHours };
+                }));
+            };
+
+            const removeSubject = (subjectName) => {
+                if (confirm(`តើអ្នកពិតជាចង់លុបមុខវិជ្ជា "${subjectName}" មែនទេ? (វានឹងលុបពីទិន្នន័យគ្រូ និងថ្នាក់រៀនផងដែរ)`)) {
+                    setAllSubjects(allSubjects.filter(s => s !== subjectName));
+                    setTeachers(teachers.map(t => ({
+                        ...t,
+                        subjects: t.subjects ? t.subjects.filter(s => s !== subjectName) : []
+                    })));
+                    setClasses(classes.map(c => {
+                        const newHours = { ...c.subjectHours };
+                        delete newHours[subjectName];
+                        return { ...c, subjectHours: newHours };
+                    }));
+                }
+            };
+
+            const handleDeleteAllData = async () => {
+                if (!user) return;
+                
+                // សុំលេខសម្ងាត់មុននឹងលុប
+                const passwordInput = window.prompt(`ដើម្បីបញ្ជាក់សុវត្ថិភាព សូមបញ្ចូលលេខសម្ងាត់សម្រាប់គណនេយ្យ (${user.email}) ដើម្បីលុបទិន្នន័យទាំងអស់៖`);
+                
+                if (passwordInput === null) {
+                    return; // អ្នកប្រើប្រាស់ចុច Cancel
+                }
+                
+                if (passwordInput.trim() === '') {
+                    alert('អ្នកត្រូវតែបញ្ចូលលេខសម្ងាត់!');
+                    return;
+                }
+
+                try {
+                    // ផ្ទៀងផ្ទាត់លេខសម្ងាត់ឡើងវិញ
+                    const credential = window.FirebaseAPI.EmailAuthProvider.credential(user.email, passwordInput);
+                    await window.FirebaseAPI.reauthenticateWithCredential(user, credential);
+                    
+                    if (window.confirm('🚨 ការផ្ទៀងផ្ទាត់ជោគជ័យ។ តើអ្នកពិតជាចង់លុបទិន្នន័យទាំងអស់ (គ្រូ, ថ្នាក់រៀន, មុខវិជ្ជា និងកាលវិភាគ) មែនទេ?\n\nបញ្ជាក់៖ ទិន្នន័យដែលលុបហើយមិនអាចទាញមកវិញបានទេ!')) {
+                        setTeachers([]);
+                        setClasses([]);
+                        setSchedules({});
+                        setAllSubjects([]);
+                        setActiveTab('teachers');
+                        
+                        // Force Save immediately to Firebase
+                        if (window.FirebaseAPI) {
+                            const appId = "kob_schedule_app";
+                            const docRef = window.FirebaseAPI.doc(db, 'artifacts', appId, 'users', user.uid, 'schoolData', 'main');
+                            
+                            await window.FirebaseAPI.setDoc(docRef, {
+                                teachers: [],
+                                classes: [],
+                                schedules: {},
+                                allSubjects: [],
+                                isSidebarOpen: isSidebarOpen,
+                                schoolProfile: schoolProfile,
+                                updatedAt: new Date().toISOString()
+                            });
+                            alert('ទិន្នន័យទាំងអស់ត្រូវបានលុបស្អាតរលីង!');
+                        }
+                    }
+                } catch (error) {
+                    console.error("Authentication Error:", error);
+                    alert('លេខសម្ងាត់មិនត្រឹមត្រូវទេ! ការលុបទិន្នន័យត្រូវបានបដិសេធ។');
+                }
+            };
+
+            const addCustomSubject = (sub) => {
+                if (!allSubjects.includes(sub)) {
+                    setAllSubjects([...allSubjects, sub]);
+                }
+            };
+
+            const handleImportData = (newClasses, newSubjects) => {
+                setAllSubjects(newSubjects);
+                setClasses(prev => [...prev, ...newClasses]);
+            };
+
+            // Scheduling Algorithm
+            const generateSchedule = () => {
+                if (classes.length === 0) {
+                    alert('សូមបញ្ចូលថ្នាក់រៀនជាមុនសិន!');
+                    return;
+                }
+                if (teachers.length === 0) {
+                    alert('សូមបញ្ចូលគ្រូបង្រៀនជាមុនសិន!');
+                    return;
+                }
+
+                const newSchedules = {};
+                let unassignedCount = 0;
+
+                // Track teacher hours to distribute evenly and respect max limits
+                const teacherHoursAssigned = {};
+                teachers.forEach(t => teacherHoursAssigned[t.id] = 0);
+
+                classes.forEach(cls => {
+                    newSchedules[cls.id] = {};
+                    DAYS.forEach(day => {
+                        newSchedules[cls.id][day] = {};
+                    });
+
+                    // Create list of required hours
+                    const demands = [];
+                    Object.entries(cls.subjectHours).forEach(([subject, hours]) => {
+                        for (let i = 0; i < hours; i++) {
+                            demands.push({ subject, level: cls.level, classId: cls.id });
+                        }
+                    });
+
+                    // Try to place each demand
+                    demands.forEach(demand => {
+                        // Find available teachers for this subject and class
+                        let availableTeachers = teachers.filter(t => {
+                            const matchSubject = t.subjects && t.subjects.includes(demand.subject);
+                            // Class matching: either explicitly allowed or (if no allowedClasses defined) matches level
+                            const matchClass = (t.allowedClasses && t.allowedClasses.includes(demand.classId)) || 
+                                               (!t.allowedClasses && t.levels && t.levels.includes(demand.level));
+                            return matchSubject && matchClass;
+                        });
+
+                        // Sort teachers by hours assigned (to distribute evenly)
+                        availableTeachers.sort((a, b) => teacherHoursAssigned[a.id] - teacherHoursAssigned[b.id]);
+
+                        let placed = false;
+                        
+                        // Try placing without exceeding max hours first
+                        for (let attempt = 1; attempt <= 2; attempt++) {
+                            if (placed) break;
+                            
+                            for (let tIdx = 0; tIdx < availableTeachers.length; tIdx++) {
+                                const teacher = availableTeachers[tIdx];
+                                
+                                // Attempt 1: Strict on max hours. Attempt 2: Allow overtime
+                                if (attempt === 1 && teacherHoursAssigned[teacher.id] >= (teacher.maxHours || 20)) {
+                                    continue;
+                                }
+
+                                // Find a free slot in the class schedule
+                                for (let dIdx = 0; dIdx < DAYS.length; dIdx++) {
+                                    const dayName = DAYS[dIdx];
+                                    const isMorningDay = dayName.includes('ព្រឹក');
+                                    
+                                    for (let sIdx = 0; sIdx < SLOTS.length; sIdx++) {
+                                        const slot = SLOTS[sIdx];
+                                        const slotId = slot.id;
+                                        
+                                        // Match slot type with day type
+                                        if ((isMorningDay && slot.type !== 'Morning') || (!isMorningDay && slot.type !== 'Afternoon')) {
+                                            continue;
+                                        }
+
+                                        // Check if class is free
+                                        if (!newSchedules[cls.id][dayName][slotId]) {
+                                            
+                                            // Check if teacher is specific off this slot
+                                            let isTeacherOff = false;
+                                            if (teacher.specificSlotsOff && teacher.specificSlotsOff[dayName] && teacher.specificSlotsOff[dayName].includes(slotId)) {
+                                                isTeacherOff = true;
+                                            }
+
+                                            // Check if teacher is already teaching in another class at this exact time
+                                            let teacherConflict = false;
+                                            for (const otherClsId in newSchedules) {
+                                                if (newSchedules[otherClsId][dayName] && newSchedules[otherClsId][dayName][slotId]?.teacherId === teacher.id) {
+                                                    teacherConflict = true;
+                                                    break;
+                                                }
+                                            }
+
+                                            if (!isTeacherOff && !teacherConflict) {
+                                                newSchedules[cls.id][dayName][slotId] = {
+                                                    subject: demand.subject,
+                                                    teacherId: teacher.id,
+                                                    teacherName: teacher.name,
+                                                    isOvertime: teacherHoursAssigned[teacher.id] >= (teacher.maxHours || 20)
+                                                };
+                                                teacherHoursAssigned[teacher.id]++;
+                                                placed = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (placed) break;
+                                }
+                                if (placed) break;
+                            }
+                        }
+
+                        if (!placed) {
+                            unassignedCount++;
+                        }
+                    });
+                });
+
+                if (unassignedCount > 0) {
+                    alert(`កាលវិភាគបានបង្កើត ប៉ុន្តែមាន ${unassignedCount} ម៉ោងមិនអាចរៀបចំបាន ដោយសារខ្វះគ្រូ ឬគ្រូជាប់រវល់ជាន់ម៉ោងគ្នា។`);
+                } else {
+                    alert('កាលវិភាគបានបង្កើតដោយជោគជ័យ!');
+                }
+
+                setSchedules(newSchedules);
+                setActiveTab('schedule');
+            };
+
+            if (!isLoaded) return <div className="p-10 text-center flex items-center justify-center min-h-screen text-blue-600 font-bold bg-gray-50">កំពុងផ្ទុកកម្មវិធី...</div>;
+
+            // ផ្ទាំង Login
+            if (!user) {
+                return (
+                    <div className="flex h-screen items-center justify-center bg-gray-100 p-4">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-100">
+                            <div className="text-center mb-8">
+                                <h1 className="text-2xl font-bold text-blue-900 mb-2 font-khmer-muol">ប្រព័ន្ធគ្រប់គ្រងកាលវិភាគ</h1>
+                                <p className="text-gray-500 font-bold">សម្រាប់សាលារៀនចំណេះទូទៅ</p>
+                            </div>
+                            
+                            {loginError && (
+                                <div className="mb-4 bg-red-50 text-red-600 p-3 rounded-lg text-sm font-bold text-center border border-red-100">
+                                    {loginError}
+                                </div>
+                            )}
+
+                            <form onSubmit={handleLogin} className="space-y-5">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1.5">អ៊ីមែល</label>
+                                    <input 
+                                        type="email" 
+                                        value={email} 
+                                        onChange={e => setEmail(e.target.value)} 
+                                        className="w-full border-2 border-gray-200 p-3 rounded-xl focus:ring-0 focus:border-blue-500 transition-colors bg-gray-50" 
+                                        placeholder="ឧ. admin@kob.edu.kh" 
+                                        required 
+                                        disabled={isLoggingIn}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1.5">លេខសម្ងាត់</label>
+                                    <input 
+                                        type="password" 
+                                        value={password} 
+                                        onChange={e => setPassword(e.target.value)} 
+                                        className="w-full border-2 border-gray-200 p-3 rounded-xl focus:ring-0 focus:border-blue-500 transition-colors bg-gray-50" 
+                                        placeholder="បញ្ជូលលេខសម្ងាត់" 
+                                        required 
+                                        disabled={isLoggingIn}
+                                    />
+                                </div>
+                                <button 
+                                    type="submit" 
+                                    className={`w-full bg-blue-600 text-white font-bold py-3.5 rounded-xl shadow-md hover:bg-blue-700 transition-colors flex items-center justify-center gap-2 ${isLoggingIn ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                    disabled={isLoggingIn}
+                                >
+                                    {isLoggingIn ? 'កំពុងផ្ទៀងផ្ទាត់...' : 'ចូលប្រព័ន្ធ'}
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex h-screen bg-gray-100 overflow-hidden">
+                    {/* Sidebar Navigation */}
+                    <div className={`${isSidebarOpen ? 'w-64' : 'w-20'} bg-blue-900 text-white shadow-xl flex flex-col transition-all duration-300 no-print shrink-0 z-20`}>
+                        <div className="p-4 flex items-center justify-between border-b border-blue-800 h-16 shrink-0">
+                            {isSidebarOpen && <h1 className="font-bold text-lg whitespace-nowrap overflow-hidden text-ellipsis mr-2">{schoolProfile.name}</h1>}
+                            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1.5 rounded hover:bg-blue-800 text-blue-200 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d={isSidebarOpen ? "M11.25 4.5l7.5 7.5-7.5 7.5m-6-15l7.5 7.5-7.5 7.5" : "M3.75 6h16.5M3.75 12h16.5M3.75 18h16.5"} />
+                                </svg>
+                            </button>
+                        </div>
+                        <nav className="flex-1 py-6 space-y-2 px-3 overflow-y-auto custom-scrollbar">
+                            <button onClick={() => setActiveTab('teachers')} title="គ្រប់គ្រងគ្រូបង្រៀន" className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg font-bold transition-all ${activeTab === 'teachers' ? 'bg-blue-600 shadow-md text-white' : 'text-blue-200 hover:bg-blue-800 hover:text-white'}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" /></svg>
+                                {isSidebarOpen && <span>គ្រូបង្រៀន <span className="bg-blue-800 text-xs px-2 py-0.5 rounded-full ml-1">{teachers.length}</span></span>}
+                            </button>
+                            <button onClick={() => setActiveTab('classes')} title="គ្រប់គ្រងថ្នាក់រៀន" className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg font-bold transition-all ${activeTab === 'classes' ? 'bg-blue-600 shadow-md text-white' : 'text-blue-200 hover:bg-blue-800 hover:text-white'}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.436 60.436 0 00-.491 6.347A48.627 48.627 0 0112 20.904a48.627 48.627 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.57 50.57 0 00-2.658-.813A59.905 59.905 0 0112 3.493a59.902 59.902 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.697 50.697 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5" /></svg>
+                                {isSidebarOpen && <span>ថ្នាក់រៀន <span className="bg-blue-800 text-xs px-2 py-0.5 rounded-full ml-1">{classes.length}</span></span>}
+                            </button>
+                            <button onClick={() => setActiveTab('subjects')} title="គ្រប់គ្រងមុខវិជ្ជា" className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg font-bold transition-all ${activeTab === 'subjects' ? 'bg-blue-600 shadow-md text-white' : 'text-blue-200 hover:bg-blue-800 hover:text-white'}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
+                                {isSidebarOpen && <span>មុខវិជ្ជា <span className="bg-blue-800 text-xs px-2 py-0.5 rounded-full ml-1">{allSubjects.length}</span></span>}
+                            </button>
+                            <button onClick={() => setActiveTab('schedule')} title="កាលវិភាគ" className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg font-bold transition-all ${activeTab === 'schedule' ? 'bg-blue-600 shadow-md text-white' : 'text-blue-200 hover:bg-blue-800 hover:text-white'}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5m-9-6h.008v.008H12v-.008zM12 15h.008v.008H12V15zm0 2.25h.008v.008H12v-.008zM9.75 15h.008v.008H9.75V15zm0 2.25h.008v.008H9.75v-.008zM7.5 15h.008v.008H7.5V15zm0 2.25h.008v.008H7.5v-.008zm6.75-4.5h.008v.008h-.008v-.008zm0 2.25h.008v.008h-.008V15zm0 2.25h.008v.008h-.008v-.008zm2.25-4.5h.008v.008H16.5v-.008zm0 2.25h.008v.008H16.5V15z" /></svg>
+                                {isSidebarOpen && <span>កាលវិភាគ</span>}
+                            </button>
+                            <button onClick={() => setActiveTab('settings')} title="ការកំណត់" className={`w-full flex items-center gap-3 px-3 py-3 rounded-lg font-bold transition-all ${activeTab === 'settings' ? 'bg-blue-600 shadow-md text-white' : 'text-blue-200 hover:bg-blue-800 hover:text-white'}`}>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.107-1.204l-.527-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                {isSidebarOpen && <span>ការកំណត់</span>}
+                            </button>
+                        </nav>
+                        
+                        {/* Logout & Delete All Buttons */}
+                        <div className="p-3 border-t border-blue-800 shrink-0 space-y-2">
+                            {user && isSidebarOpen && (
+                                <div className="px-3 py-2 mb-2 bg-blue-800 rounded-lg text-xs text-blue-200 truncate border border-blue-700" title={user.email}>
+                                    កំពុងប្រើ៖ <span className="text-white font-bold">{user.email}</span>
+                                </div>
+                            )}
+                            {user && !isSidebarOpen && (
+                                <div className="px-1 py-2 mb-2 bg-blue-800 rounded text-[10px] text-blue-200 text-center truncate border border-blue-700" title={user.email}>
+                                    User
+                                </div>
+                            )}
+                            <button onClick={handleDeleteAllData} title="លុបទិន្នន័យទាំងអស់" className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg font-bold text-orange-200 hover:bg-orange-600 hover:text-white transition-all text-sm">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                                {isSidebarOpen && <span>លុបទិន្នន័យទាំងអស់</span>}
+                            </button>
+                            <button onClick={handleLogout} title="ចាកចេញ" className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg font-bold text-red-300 hover:bg-red-500 hover:text-white transition-all text-sm">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 shrink-0"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" /></svg>
+                                {isSidebarOpen && <span>ចាកចេញ</span>}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Main Content Area */}
+                    <div className="flex-1 flex flex-col h-full overflow-hidden">
+                        <header className="bg-white shadow-sm border-b px-6 py-4 flex items-center h-16 shrink-0 no-print z-10">
+                            <h2 className="text-xl font-bold text-gray-800">
+                                {activeTab === 'teachers' && 'ការគ្រប់គ្រងគ្រូបង្រៀន'}
+                                {activeTab === 'classes' && 'ការគ្រប់គ្រងថ្នាក់រៀន'}
+                                {activeTab === 'subjects' && 'ការគ្រប់គ្រងមុខវិជ្ជា'}
+                                {activeTab === 'schedule' && 'កាលវិភាគបង្រៀន'}
+                                {activeTab === 'settings' && 'ការកំណត់ទម្រង់សាលារៀន'}
+                            </h2>
+                        </header>
+
+                        <main className="flex-1 overflow-auto p-4 sm:p-6 bg-gray-50">
+                            {activeTab === 'teachers' && <TeacherManager classes={classes} teachers={teachers} addTeacher={addTeacher} updateTeacher={updateTeacher} removeTeacher={removeTeacher} allSubjects={allSubjects} addCustomSubject={addCustomSubject} />}
+                            {activeTab === 'classes' && <ClassManager classes={classes} addClass={addClass} updateClass={updateClass} removeClass={removeClass} allSubjects={allSubjects} handleImportData={handleImportData} />}
+                            {activeTab === 'subjects' && <SubjectManager allSubjects={allSubjects} addCustomSubject={addCustomSubject} updateSubject={updateSubject} removeSubject={removeSubject} />}
+                            {activeTab === 'schedule' && <ScheduleViewer classes={classes} teachers={teachers} schedules={schedules} generateSchedule={generateSchedule} schoolProfile={schoolProfile} />}
+                            {activeTab === 'settings' && <SettingsManager schoolProfile={schoolProfile} setSchoolProfile={setSchoolProfile} />}
+                        </main>
+                    </div>
+                </div>
+            );
+        }
+
+        // ================= Settings Manager Component =================
+        function SettingsManager({ schoolProfile, setSchoolProfile }) {
+            const handleChange = (e) => {
+                const { name, value } = e.target;
+                setSchoolProfile(prev => ({ ...prev, [name]: value }));
+            };
+
+            return (
+                <div className="bg-white p-5 sm:p-8 rounded-xl shadow-sm border border-gray-100 max-w-3xl mx-auto h-full overflow-y-auto">
+                    <div className="text-center mb-8">
+                        <h2 className="text-2xl font-bold text-blue-900 font-khmer-muol mb-2">ការកំណត់ទម្រង់សាលារៀន</h2>
+                        <p className="text-gray-500">ទិន្នន័យនេះនឹងត្រូវបង្ហាញនៅលើក្បាលតារាងកាលវិភាគពេលបោះពុម្ព</p>
+                    </div>
+
+                    <div className="space-y-6">
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">ឈ្មោះសាលារៀន (ឧ. វិទ្យាល័យកូប)</label>
+                            <input type="text" name="name" value={schoolProfile.name} onChange={handleChange} className="w-full border-2 border-gray-200 p-3 rounded-xl focus:ring-0 focus:border-blue-500 transition-colors font-bold text-lg" placeholder="បញ្ជូលឈ្មោះសាលារៀន" />
+                        </div>
+                        
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">មន្ទីរអប់រំ / ស្ថាប័នគ្រប់គ្រង (ឧ. មន្ទីរអប់រំ យុវជន និងកីឡាខេត្តបន្ទាយមានជ័យ)</label>
+                            <input type="text" name="department" value={schoolProfile.department} onChange={handleChange} className="w-full border-2 border-gray-200 p-3 rounded-xl focus:ring-0 focus:border-blue-500 transition-colors" placeholder="បញ្ជូលស្ថាប័នគ្រប់គ្រង" />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-gray-700 mb-2">ឆ្នាំសិក្សា (ឧ. ២០២៤ - ២០២៥)</label>
+                            <input type="text" name="academicYear" value={schoolProfile.academicYear} onChange={handleChange} className="w-full border-2 border-gray-200 p-3 rounded-xl focus:ring-0 focus:border-blue-500 transition-colors" placeholder="បញ្ជូលឆ្នាំសិក្សា" />
+                        </div>
+                    </div>
+
+                    <div className="mt-8 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                        <h3 className="font-bold text-blue-800 mb-2 flex items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
+                            ចំណាំ៖
+                        </h3>
+                        <p className="text-sm text-blue-700 leading-relaxed">រាល់ការផ្លាស់ប្តូរទិន្នន័យនៅទីនេះ នឹងត្រូវបានរក្សាទុកដោយស្វ័យប្រវត្តិ។ គណនេយ្យនីមួយៗ (តាមរយៈអ៊ីមែល) នឹងមានទិន្នន័យផ្សេងៗគ្នា ដូច្នេះលោកអ្នកអាចគ្រប់គ្រងសាលារៀនច្រើនក្នុងពេលតែមួយបានដោយគ្រាន់តែបង្កើតគណនេយ្យ (អ៊ីមែល) ផ្សេងគ្នា។</p>
+                    </div>
+                </div>
+            );
+        }
+
+        // ================= Subject Manager Components =================
+        function SubjectManager({ allSubjects, addCustomSubject, updateSubject, removeSubject }) {
+            const [newSubject, setNewSubject] = useState('');
+            const [editingSub, setEditingSub] = useState(null);
+            const [editValue, setEditValue] = useState('');
+
+            const handleAdd = (e) => {
+                e.preventDefault();
+                if (newSubject.trim()) {
+                    addCustomSubject(newSubject.trim());
+                    setNewSubject('');
+                }
+            };
+
+            const handleSaveEdit = (oldName) => {
+                if (editValue.trim() && editValue.trim() !== oldName) {
+                    updateSubject(oldName, editValue.trim());
+                }
+                setEditingSub(null);
+            };
+
+            return (
+                <div className="bg-white p-5 sm:p-6 rounded-xl shadow-sm border border-gray-100 max-w-5xl mx-auto h-full flex flex-col">
+                    <h2 className="text-lg font-bold mb-4 text-blue-800 flex items-center gap-2 border-b pb-2 shrink-0">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" /></svg>
+                        បញ្ជីមុខវិជ្ជាសរុប ({allSubjects.length})
+                    </h2>
+                    
+                    <form onSubmit={handleAdd} className="flex gap-3 mb-6 shrink-0">
+                        <input type="text" value={newSubject} onChange={e => setNewSubject(e.target.value)} className="flex-1 border p-2.5 rounded-lg focus:ring-blue-500 focus:border-blue-500 bg-gray-50" placeholder="បញ្ចូលឈ្មោះមុខវិជ្ជាថ្មី..." required />
+                        <button type="submit" className="bg-blue-600 text-white px-6 py-2.5 rounded-lg font-bold shadow-md hover:bg-blue-700 transition-colors flex gap-2 items-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                            បន្ថែមមុខវិជ្ជា
+                        </button>
+                    </form>
+
+                    <div className="overflow-y-auto flex-1 custom-scrollbar pr-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pb-4">
+                            {allSubjects.map(sub => (
+                                <div key={sub} className="flex items-center justify-between p-3 border rounded-xl bg-white shadow-sm hover:border-blue-300 transition-all group">
+                                    {editingSub === sub ? (
+                                        <input 
+                                            type="text" 
+                                            value={editValue} 
+                                            onChange={e => setEditValue(e.target.value)} 
+                                            onKeyPress={e => e.key === 'Enter' && handleSaveEdit(sub)}
+                                            onBlur={() => handleSaveEdit(sub)}
+                                            autoFocus
+                                            className="border-2 border-blue-400 p-1.5 rounded w-full text-sm font-bold outline-none"
+                                        />
+                                    ) : (
+                                        <span className="font-bold text-gray-700">{sub}</span>
+                                    )}
+                                    
+                                    {editingSub !== sub && (
+                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2 shrink-0">
+                                            <button onClick={() => { setEditingSub(sub); setEditValue(sub); }} className="p-1.5 text-blue-500 hover:bg-blue-50 hover:text-blue-700 rounded-full transition-colors" title="កែប្រែ">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg>
+                                            </button>
+                                            <button onClick={() => removeSubject(sub)} className="p-1.5 text-red-400 hover:bg-red-50 hover:text-red-600 rounded-full transition-colors" title="លុប">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ================= Teacher Components =================
+        function TeacherManager({ classes, teachers, addTeacher, updateTeacher, removeTeacher, allSubjects, addCustomSubject }) {
+            const [editingId, setEditingId] = useState(null);
+            const [name, setName] = useState('');
+            const [subjects, setSubjects] = useState([allSubjects[0]]);
+            const [newSubject, setNewSubject] = useState('');
+            const [allowedClasses, setAllowedClasses] = useState([]);
+            const [specificSlotsOff, setSpecificSlotsOff] = useState({});
+            const [maxHours, setMaxHours] = useState(20);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (!name || subjects.length === 0) return;
+                
+                if (editingId) {
+                    updateTeacher(editingId, { name, subjects, allowedClasses, specificSlotsOff, maxHours });
+                    setEditingId(null);
+                } else {
+                    addTeacher({ name, subjects, allowedClasses, specificSlotsOff, maxHours });
+                }
+                
+                // Reset form
+                setName('');
+                setAllowedClasses([]);
+                setSpecificSlotsOff({});
+                setMaxHours(20);
+                setSubjects([allSubjects[0]]);
+            };
+
+            const handleEdit = (teacher) => {
+                setName(teacher.name);
+                setSubjects(teacher.subjects || []);
+                setAllowedClasses(teacher.allowedClasses || []);
+                setSpecificSlotsOff(teacher.specificSlotsOff || {});
+                setMaxHours(teacher.maxHours || 20);
+                setEditingId(teacher.id);
+            };
+
+            const cancelEdit = () => {
+                setEditingId(null);
+                setName('');
+                setAllowedClasses([]);
+                setSpecificSlotsOff({});
+                setMaxHours(20);
+                setSubjects([allSubjects[0]]);
+            };
+
+            const handleAddCustomSubject = () => {
+                if (newSubject.trim()) {
+                    addCustomSubject(newSubject.trim());
+                    if (!subjects.includes(newSubject.trim())) {
+                        setSubjects([...subjects, newSubject.trim()]);
+                    }
+                    setNewSubject('');
+                }
+            };
+
+            const toggleSubject = (sub) => {
+                if (subjects.includes(sub)) {
+                    if (subjects.length > 1) setSubjects(subjects.filter(s => s !== sub));
+                } else {
+                    setSubjects([...subjects, sub]);
+                }
+            };
+
+            const toggleClass = (cId) => {
+                if (allowedClasses.includes(cId)) {
+                    setAllowedClasses(allowedClasses.filter(id => id !== cId));
+                } else {
+                    setAllowedClasses([...allowedClasses, cId]);
+                }
+            };
+
+            const toggleSpecificSlot = (day, slotId) => {
+                const newOff = { ...specificSlotsOff };
+                if (!newOff[day]) newOff[day] = [];
+                
+                if (newOff[day].includes(slotId)) {
+                    newOff[day] = newOff[day].filter(id => id !== slotId);
+                } else {
+                    newOff[day].push(slotId);
+                }
+                setSpecificSlotsOff(newOff);
+            };
+
+            return (
+                <div className="flex flex-col lg:flex-row gap-6 h-full">
+                    {/* Form Section */}
+                    <div className="w-full lg:w-[70%] bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col shrink-0 overflow-y-auto custom-scrollbar" style={{maxHeight: 'calc(100vh - 120px)'}}>
+                        <h2 className="text-lg font-bold mb-4 text-blue-800 flex items-center gap-2 border-b pb-2 sticky top-0 bg-white z-10">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z" /></svg>
+                            {editingId ? 'កែប្រែទិន្នន័យគ្រូបង្រៀន' : 'បន្ថែមគ្រូបង្រៀនថ្មី'}
+                        </h2>
+                        <form onSubmit={handleSubmit} className="space-y-5">
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1.5">ឈ្មោះគ្រូបង្រៀន</label>
+                                <input type="text" value={name} onChange={e => setName(e.target.value)} className="w-full border p-2 rounded focus:ring-blue-500 focus:border-blue-500" placeholder="ឧ. លោកគ្រូ ក" required />
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1.5">មុខវិជ្ជាអាចបង្រៀនបាន</label>
+                                <div className="flex flex-wrap gap-2 mb-2">
+                                    {allSubjects.map(s => (
+                                        <button key={s} type="button" onClick={() => toggleSubject(s)} className={`px-3 py-1 text-sm rounded-full border transition-colors ${subjects.includes(s) ? 'bg-blue-100 border-blue-300 text-blue-700 font-bold' : 'bg-gray-50 border-gray-200 text-gray-600'}`}>
+                                            {s}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="flex gap-2">
+                                    <input type="text" value={newSubject} onChange={e => setNewSubject(e.target.value)} onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), handleAddCustomSubject())} className="flex-1 border p-1.5 rounded text-sm" placeholder="វាយបញ្ចូលមុខវិជ្ជាផ្សេងទៀត..." />
+                                    <button type="button" onClick={handleAddCustomSubject} className="bg-gray-200 px-3 rounded text-sm font-bold">បន្ថែម</button>
+                                </div>
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1.5">ថ្នាក់បង្រៀន (បើមិនរើស មានន័យថាបង្រៀនបានគ្រប់ថ្នាក់)</label>
+                                {classes.length === 0 ? (
+                                    <div className="text-xs text-red-500 italic bg-red-50 p-2 rounded">សូមបង្កើតថ្នាក់រៀនជាមុនសិន។</div>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-1 border rounded bg-gray-50 custom-scrollbar">
+                                        {classes.map(c => (
+                                            <button key={c.id} type="button" onClick={() => toggleClass(c.id)} className={`px-3 py-1 text-sm rounded border transition-colors ${allowedClasses.includes(c.id) ? 'bg-indigo-100 border-indigo-300 text-indigo-700 font-bold' : 'bg-white border-gray-300 text-gray-600'}`}>
+                                                ថ្នាក់ {c.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1.5">ម៉ោងអតិបរមា/សប្តាហ៍</label>
+                                <input type="number" value={maxHours} onChange={e => setMaxHours(parseInt(e.target.value)||0)} className="w-full border p-2 rounded" min="1" required />
+                            </div>
+                            
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1.5">ម៉ោងសុំសម្រាកតាមថ្ងៃ (ចុចលើម៉ោងដើម្បីបិទ)</label>
+                                <div className="overflow-x-auto border rounded-lg shadow-sm">
+                                    <table className="w-full text-xs text-center border-collapse bg-white">
+                                        <thead>
+                                            <tr className="bg-gray-100 border-b">
+                                                <th className="p-2 border-r min-w-[80px]">ថ្ងៃ\ម៉ោង</th>
+                                                {SLOTS.map(s => <th key={s.id} className="p-1 border-r font-normal">{s.name.split(' - ')[0].replace('ម៉ោង ','')}</th>)}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {WEEK_DAYS.map(dayName => (
+                                                <tr key={dayName} className="border-b">
+                                                    <td className="p-1.5 border-r font-bold bg-gray-50 whitespace-nowrap">{dayName}</td>
+                                                    {SLOTS.map(slot => {
+                                                        const specificDay = slot.type === 'Morning' ? `${dayName} - ព្រឹក` : `${dayName} - ល្ងាច`;
+                                                        const isOff = specificSlotsOff[specificDay] && specificSlotsOff[specificDay].includes(slot.id);
+                                                        
+                                                        return (
+                                                            <td key={slot.id} className="p-0.5 border-r border-dashed">
+                                                                <button type="button" onClick={() => toggleSpecificSlot(specificDay, slot.id)} className={`w-full py-2 rounded transition-colors font-bold ${isOff ? 'bg-red-500 text-white shadow-inner' : 'bg-green-100 text-green-700 hover:bg-green-200'}`} title={isOff ? 'សម្រាក' : 'បង្រៀន'}>
+                                                                    {isOff ? 'X' : '✓'}
+                                                                </button>
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div className="pt-2 sticky bottom-0 bg-white border-t mt-4 flex gap-3">
+                                {editingId && (
+                                    <button type="button" onClick={cancelEdit} className="w-1/3 bg-gray-200 text-gray-700 font-bold py-3 rounded-lg shadow-sm hover:bg-gray-300 transition-colors">
+                                        បោះបង់
+                                    </button>
+                                )}
+                                <button type="submit" className={`${editingId ? 'w-2/3 bg-green-600 hover:bg-green-700' : 'w-full bg-blue-600 hover:bg-blue-700'} text-white font-bold py-3 rounded-lg shadow-md transition-colors flex items-center justify-center gap-2`}>
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                    {editingId ? 'រក្សាទុកការកែប្រែ' : 'រក្សាទុកទិន្នន័យគ្រូ'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                    
+                    {/* List Section */}
+                    <div className="w-full lg:w-[30%] bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden" style={{maxHeight: 'calc(100vh - 120px)'}}>
+                        <h2 className="text-lg font-bold mb-4 text-gray-800 flex items-center gap-2 border-b pb-2 shrink-0">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z" /></svg>
+                            បញ្ជីឈ្មោះគ្រូបង្រៀនសរុប ({teachers.length})
+                        </h2>
+                        <div className="overflow-auto flex-1 custom-scrollbar pr-2">
+                            <div className="space-y-3">
+                                {teachers.length === 0 ? (
+                                    <div className="p-8 text-center text-gray-500 bg-gray-50 rounded-lg border border-dashed">មិនទាន់មានទិន្នន័យគ្រូបង្រៀន</div>
+                                ) : (
+                                    teachers.map(t => (
+                                        <div key={t.id} className={`bg-white border rounded-xl p-3 shadow-sm relative group hover:border-blue-300 transition-colors ${editingId === t.id ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200'}`}>
+                                            <div className="absolute top-2 right-2 flex gap-1">
+                                                <button onClick={() => handleEdit(t)} className="text-gray-400 hover:text-blue-500 hover:bg-blue-50 p-1.5 rounded-full transition-all" title="កែប្រែ">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg>
+                                                </button>
+                                                <button onClick={() => removeTeacher(t.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1.5 rounded-full transition-all" title="លុប">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                                                </button>
+                                            </div>
+                                            <div className="flex items-start gap-3 mb-2 pr-12">
+                                                <div className="bg-blue-100 text-blue-700 w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg shrink-0">
+                                                    {t.name.charAt(0)}
+                                                </div>
+                                                <div>
+                                                    <h3 className="font-bold text-gray-800 leading-tight">{t.name}</h3>
+                                                    <div className="text-xs text-gray-500 mt-1">ម៉ោងអតិបរមា: <b className="text-blue-600">{t.maxHours || 20} ម៉ោង</b></div>
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 space-y-1.5">
+                                                <div className="text-[11px]">
+                                                    <span className="text-gray-500 block mb-1">មុខវិជ្ជា៖</span>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {t.subjects && t.subjects.map(s => <span key={s} className="bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100 font-bold">{s}</span>)}
+                                                    </div>
+                                                </div>
+                                                <div className="text-[11px]">
+                                                    <span className="text-gray-500 block mb-1">ថ្នាក់៖</span>
+                                                    {t.allowedClasses && t.allowedClasses.length > 0 ? (
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {t.allowedClasses.map(cId => {
+                                                                const cName = classes.find(c => c.id === cId)?.name || cId;
+                                                                return <span key={cId} className="bg-indigo-50 text-indigo-600 border border-indigo-100 px-1.5 py-0.5 rounded font-bold">{cName}</span>;
+                                                            })}
+                                                        </div>
+                                                    ) : <span className="text-gray-400 italic">គ្រប់ថ្នាក់</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ================= Class Components =================
+        function ClassManager({ classes, addClass, updateClass, removeClass, allSubjects, handleImportData }) {
+            const [editingId, setEditingId] = useState(null);
+            const [grade, setGrade] = useState('១២');
+            const [section, setSection] = useState('A');
+            const [studentsCount, setStudentsCount] = useState(40);
+            
+            const [subjectHours, setSubjectHours] = useState(() => {
+                const initial = {};
+                allSubjects.forEach(s => initial[s] = 0);
+                return initial;
+            });
+
+            useEffect(() => {
+                setSubjectHours(prev => {
+                    const next = { ...prev };
+                    allSubjects.forEach(s => { if (next[s] === undefined) next[s] = 0; });
+                    return next;
+                });
+            }, [allSubjects]);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const name = `${grade}${section}`;
+                const level = parseInt(grade) <= 9 ? 'បឋមភូមិ' : 'ទុតិយភូមិ';
+                
+                const cleanSubjectHours = {};
+                Object.entries(subjectHours).forEach(([sub, h]) => {
+                    cleanSubjectHours[sub] = parseInt(h) || 0;
+                });
+
+                if (editingId) {
+                    updateClass(editingId, { name, grade, section, level, studentsCount, subjectHours: cleanSubjectHours });
+                    setEditingId(null);
+                } else {
+                    addClass({ name, grade, section, level, studentsCount, subjectHours: cleanSubjectHours });
+                }
+                
+                setStudentsCount(40);
+                const initial = {};
+                allSubjects.forEach(s => initial[s] = 0);
+                setSubjectHours(initial);
+            };
+
+            const handleEdit = (cls) => {
+                setGrade(cls.grade || (cls.name ? cls.name.match(/([០-៩]+|\d+)/)?.[0] : '១២') || '១២');
+                setSection(cls.section || (cls.name ? cls.name.match(/[A-Za-z]+/)?.[0] : 'A') || 'A');
+                setStudentsCount(cls.studentsCount || 40);
+                
+                const initialHours = {};
+                allSubjects.forEach(s => initialHours[s] = cls.subjectHours?.[s] || 0);
+                setSubjectHours(initialHours);
+                setEditingId(cls.id);
+            };
+
+            const cancelEdit = () => {
+                setEditingId(null);
+                setStudentsCount(40);
+                const initial = {};
+                allSubjects.forEach(s => initial[s] = 0);
+                setSubjectHours(initial);
+            };
+
+            const handleHoursChange = (sub, val) => {
+                setSubjectHours({ ...subjectHours, [sub]: val === '' ? '' : parseInt(val) || 0 });
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    try {
+                        const data = new Uint8Array(evt.target.result);
+                        const workbook = window.XLSX.read(data, {type: 'array'});
+                        
+                        let newSubjects = new Set(allSubjects);
+                        let classList = [];
+                        let curriculumMap = {};
+
+                        workbook.SheetNames.forEach(sheetName => {
+                            const rawData = window.XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
+                            if (rawData.length < 2) return;
+
+                            const gradeHeaderRowIdx = rawData.findIndex(row => row.some(cell => String(cell).includes('អក្សរថ្នាក់')));
+                            if (gradeHeaderRowIdx !== -1) {
+                                const headers = rawData[gradeHeaderRowIdx];
+                                const gradeIdx = headers.findIndex(h => String(h).includes('ថ្នាក់') && !String(h).includes('អក្សរ') && !String(h).includes('ប្រភេទ'));
+                                const sectionIdx = headers.findIndex(h => String(h).includes('អក្សរថ្នាក់'));
+                                const typeIdx = headers.findIndex(h => String(h).includes('ប្រភេទថ្នាក់'));
+                                const levelIdx = headers.findIndex(h => String(h).includes('កម្រិត'));
+                                
+                                for (let i = gradeHeaderRowIdx + 1; i < rawData.length; i++) {
+                                    const row = rawData[i];
+                                    if (!row[gradeIdx] && !row[sectionIdx]) continue;
+                                    
+                                    let gradeStr = String(row[gradeIdx] || '').trim();
+                                    let sectionStr = String(row[sectionIdx] || '').trim();
+                                    let typeStr = String(typeIdx !== -1 ? row[typeIdx] : '').trim();
+                                    let levelStr = String(levelIdx !== -1 ? row[levelIdx] : '').trim();
+
+                                    let parsedGrade = gradeStr.replace(/[០-៩]/g, m => '០១២៣៤៥៦៧៨៩'.indexOf(m));
+
+                                    if (gradeStr || sectionStr) {
+                                        classList.push({
+                                            grade: parsedGrade,
+                                            section: sectionStr,
+                                            type: typeStr,
+                                            level: levelStr,
+                                            name: `${parsedGrade}${sectionStr}`
+                                        });
+                                    }
+                                }
+                            }
+
+                            const subjHeaderRowIdx = rawData.findIndex(row => row.some(cell => String(cell).includes('មុខវិជ្ជា')));
+                            if (subjHeaderRowIdx !== -1) {
+                                const colMap = {};
+                                const subHeaderRow = rawData[subjHeaderRowIdx];
+
+                                for (let col = 0; col < subHeaderRow.length; col++) {
+                                    let subHeader = String(subHeaderRow[col] || '').trim();
+                                    let key = '';
+                                    
+                                    if (subHeader.includes('៧') || subHeader.includes('7')) key = '7';
+                                    else if (subHeader.includes('៨') || subHeader.includes('8')) key = '8';
+                                    else if (subHeader.includes('៩') || subHeader.includes('9')) key = '9';
+                                    else if (subHeader.includes('១០') || subHeader.includes('10')) {
+                                        key = subHeader.includes('សង្គម') ? '10_សង្គម' : '10_វិទ្យាសាស្ត្រ';
+                                    }
+                                    else if (subHeader.includes('១១') || subHeader.includes('11')) {
+                                        key = subHeader.includes('សង្គម') ? '11_សង្គម' : '11_វិទ្យាសាស្ត្រ';
+                                    }
+                                    else if (subHeader.includes('១២') || subHeader.includes('12')) {
+                                        key = subHeader.includes('សង្គម') ? '12_សង្គម' : '12_វិទ្យាសាស្ត្រ';
+                                    }
+                                    
+                                    if (key) colMap[col] = key;
+                                }
+
+                                const subjColIdx = subHeaderRow.findIndex(cell => String(cell).includes('មុខវិជ្ជា'));
+                                
+                                for (let i = subjHeaderRowIdx + 1; i < rawData.length; i++) {
+                                    const row = rawData[i];
+                                    let subject = String(row[subjColIdx] || '').trim();
+                                    if (!subject || subject.includes('សរុប') || subject.match(/total/i)) continue;
+                                    
+                                    subject = subject.replace(/[\n\r]+/g, ' ').replace(/\s{2,}/g, ' ');
+                                    newSubjects.add(subject);
+
+                                    Object.keys(colMap).forEach(colIdx => {
+                                        let hours = parseInt(row[colIdx]) || 0;
+                                        let mapKey = colMap[colIdx];
+                                        if (!curriculumMap[mapKey]) curriculumMap[mapKey] = {};
+                                        if (hours > 0) {
+                                            curriculumMap[mapKey][subject] = hours;
+                                        }
+                                    });
+                                }
+                            }
+                        });
+
+                        const finalClasses = [];
+                        classList.forEach(c => {
+                            let typeKey = '';
+                            if (parseInt(c.grade) >= 10) {
+                                typeKey = (c.type && c.type.includes('សង្គម')) ? 'សង្គម' : 'វិទ្យាសាស្ត្រ';
+                            }
+                            
+                            let lookupKey = typeKey ? `${c.grade}_${typeKey}` : c.grade;
+                            let subjectHours = curriculumMap[lookupKey] || {};
+                            
+                            let finalLevel = c.level;
+                            if (!finalLevel) {
+                                finalLevel = parseInt(c.grade) <= 9 ? 'បឋមភូមិ' : 'ទុតិយភូមិ';
+                            }
+                            if (c.type && !finalLevel.includes(c.type)) {
+                                finalLevel = `${finalLevel} (${c.type})`;
+                            }
+
+                            finalClasses.push({
+                                id: Date.now().toString() + Math.random().toString(36).substr(2, 5),
+                                name: c.name,
+                                grade: c.grade,
+                                section: c.section,
+                                level: finalLevel,
+                                studentsCount: 40,
+                                subjectHours: { ...subjectHours }
+                            });
+                        });
+
+                        if (finalClasses.length === 0) {
+                            alert("រកមិនឃើញទិន្នន័យថ្នាក់ (Sheet ដែលមានជួរឈរ 'អក្សរថ្នាក់') ទេ!");
+                            return;
+                        }
+
+                        if (confirm(`រកឃើញថ្នាក់ចំនួន ${finalClasses.length} និងមុខវិជ្ជាសរុប ${newSubjects.size}។ តើអ្នកចង់នាំចូលមែនទេ?`)) {
+                            handleImportData(finalClasses, Array.from(newSubjects));
+                        }
+                    } catch (error) {
+                        console.error(error);
+                        alert('មានបញ្ហាក្នុងការអានឯកសារ Excel។');
+                    }
+                    e.target.value = null;
+                };
+                reader.readAsArrayBuffer(file);
+            };
+
+            const totalHours = Object.values(subjectHours).reduce((a, b) => a + (parseInt(b) || 0), 0);
+
+            return (
+                <div className="flex flex-col lg:flex-row gap-6 h-full print:block print:h-auto print:overflow-visible">
+                    <style>{`
+                        @media print {
+                            body, html, #root, .h-screen, .overflow-hidden, .overflow-auto, main { height: auto !important; overflow: visible !important; display: block !important; }
+                            .print-hide-border { border: none !important; box-shadow: none !important; padding: 0 !important; background: transparent !important; }
+                        }
+                    `}</style>
+                    {/* Form Section */}
+                    <div className="w-full lg:w-[70%] bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col shrink-0 overflow-y-auto custom-scrollbar print:hidden" style={{maxHeight: 'calc(100vh - 120px)'}}>
+                        <h2 className="text-lg font-bold mb-4 text-blue-800 flex items-center gap-2 border-b pb-2 sticky top-0 bg-white z-10">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v6m3-3H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                            {editingId ? 'កែប្រែទិន្នន័យថ្នាក់រៀន' : 'បន្ថែមថ្នាក់រៀនថ្មី'}
+                        </h2>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">ថ្នាក់ទី</label>
+                                    <select value={grade} onChange={e => setGrade(e.target.value)} className="w-full border p-2 rounded focus:ring-blue-500 font-bold bg-gray-50">
+                                        {['៧','៨','៩','១០','១១','១២'].map(g => <option key={g} value={g}>{g}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 mb-1">កម្រិត (Section)</label>
+                                    <select value={section} onChange={e => setSection(e.target.value)} className="w-full border p-2 rounded focus:ring-blue-500 font-bold bg-gray-50">
+                                        {['A','B','C','D','E','F','G'].map(s => <option key={s} value={s}>{s}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 mb-1">ចំនួនសិស្ស</label>
+                                <input type="number" value={studentsCount} onChange={e => setStudentsCount(parseInt(e.target.value)||0)} className="w-full border p-2 rounded focus:ring-blue-500" required />
+                            </div>
+                            
+                            <div className="pt-2">
+                                <div className="flex justify-between items-center mb-2 sticky top-0 bg-white z-10 py-1">
+                                    <label className="block text-sm font-bold text-gray-700">ចំនួនម៉ោងក្នុង១សប្តាហ៍</label>
+                                    <span className="text-xs font-bold bg-blue-100 text-blue-800 px-2 py-1 rounded-md shadow-sm border border-blue-200">សរុប៖ {totalHours} ម៉ោង</span>
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 border rounded-lg p-2 bg-gray-50 max-h-60 overflow-y-auto custom-scrollbar">
+                                    {allSubjects.map(sub => {
+                                        const hours = subjectHours[sub] !== undefined ? subjectHours[sub] : 0;
+                                        const isZero = hours === 0 || hours === '';
+                                        return (
+                                        <div key={sub} className={`flex items-center justify-between p-1 rounded border shadow-sm transition-colors ${isZero ? 'bg-red-50 border-red-200 hover:bg-red-100' : 'bg-white hover:bg-blue-50'}`}>
+                                            <span className={`text-xs font-bold ml-1 truncate ${isZero ? 'text-red-700' : 'text-gray-700'}`} title={sub}>{sub}</span>
+                                            <input type="number" 
+                                                value={hours} 
+                                                onChange={e => handleHoursChange(sub, e.target.value)} 
+                                                className={`w-12 border p-0.5 rounded text-center text-xs font-bold focus:ring-2 shrink-0 ml-1 ${isZero ? 'bg-red-100 border-red-300 text-red-700 focus:ring-red-400' : 'bg-gray-50 focus:ring-blue-400'}`} min="0" />
+                                        </div>
+                                    )})}
+                                </div>
+                            </div>
+                            <div className="pt-4 sticky bottom-0 bg-white mt-4 border-t flex gap-3">
+                                {editingId && (
+                                    <button type="button" onClick={cancelEdit} className="w-1/3 bg-gray-200 text-gray-700 font-bold py-3 rounded-lg shadow-sm hover:bg-gray-300 transition-colors">
+                                        បោះបង់
+                                    </button>
+                                )}
+                                <button type="submit" className={`${editingId ? 'w-2/3 bg-green-600 hover:bg-green-700' : 'w-full bg-blue-600 hover:bg-blue-700'} text-white font-bold py-3 rounded-lg shadow-md transition-colors`}>
+                                    {editingId ? 'រក្សាទុកការកែប្រែ' : 'រក្សាទុកថ្នាក់រៀន'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+
+                    {/* List Section */}
+                    <div className="w-full lg:w-[30%] bg-white p-5 rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden print-hide-border print:w-full print:max-h-none print:overflow-visible" style={{maxHeight: 'calc(100vh - 120px)'}}>
+                        <div className="flex flex-wrap justify-between items-center mb-4 border-b pb-2 shrink-0 gap-2 print:hidden">
+                            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" /></svg>
+                                បញ្ជីថ្នាក់ ({classes.length})
+                            </h2>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={() => window.print()} className="bg-gray-800 text-white hover:bg-gray-900 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center gap-1 shadow-sm" title="បោះពុម្ពបញ្ជីថ្នាក់រៀន">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M6.728 3.478a.75.75 0 00-.728.75v3.75m12-4.5a.75.75 0 00-.728-.75h-10.5M21 10.5a.75.75 0 00-.75-.75h-16.5a.75.75 0 00-.75.75v6a.75.75 0 00.75.75h3v3a.75.75 0 00.75.75h10.5a.75.75 0 00.75-.75v-3h3a.75.75 0 00.75-.75v-6zM15 16.5H9v-3h6v3z" /></svg>
+                                    បោះពុម្ព
+                                </button>
+                                <input type="file" id="excel-upload" className="hidden" accept=".xlsx, .xls" onChange={handleFileUpload} />
+                                <button type="button" onClick={() => document.getElementById('excel-upload').click()} className="bg-green-100 text-green-700 hover:bg-green-200 px-3 py-1.5 rounded text-xs font-bold border border-green-200 transition-colors flex items-center gap-1 shadow-sm" title="នាំចូលពី Excel">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>
+                                    នាំចូល Excel
+                                </button>
+                            </div>
+                        </div>
+                        <div className="overflow-y-auto custom-scrollbar flex-1 pr-2 print:overflow-visible">
+                            <div className="grid grid-cols-1 gap-4 pb-4 print:hidden">
+                                {classes.length === 0 && <div className="col-span-full p-10 text-center text-gray-500 bg-gray-50 rounded-xl border-2 border-dashed">មិនទាន់មានទិន្នន័យថ្នាក់រៀន</div>}
+                                {classes.map(c => (
+                                    <div key={c.id} className={`bg-white border rounded-xl p-4 shadow-sm relative group hover:border-blue-300 transition-colors ${editingId === c.id ? 'border-blue-500 ring-2 ring-blue-200' : ''}`}>
+                                        <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                            <button onClick={() => handleEdit(c)} className="text-gray-400 hover:text-blue-500 hover:bg-blue-50 p-1 rounded-full transition-all" title="កែប្រែ">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" /></svg>
+                                            </button>
+                                            <button onClick={() => removeClass(c.id)} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-1 rounded-full transition-all" title="លុប">
+                                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center gap-2 mb-2 pr-10">
+                                            <h3 className="font-bold text-gray-800 text-lg leading-tight">ថ្នាក់ {c.name}</h3>
+                                            <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-indigo-100">{c.level}</span>
+                                            <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-bold border border-blue-100">សិស្ស៖ {c.studentsCount}</span>
+                                        </div>
+                                        <div className="border-t pt-2 mt-2 bg-gray-50 -mx-4 -mb-4 p-3 rounded-b-xl">
+                                            <div className="text-xs font-bold text-gray-500 mb-1.5 flex justify-between">
+                                                <span>ម៉ោងសិក្សា</span>
+                                                <span className="text-blue-700">សរុប៖ {Object.values(c.subjectHours || {}).reduce((a,b)=>a+b,0)}</span>
+                                            </div>
+                                            <div className="flex flex-wrap gap-1">
+                                                {Object.entries(c.subjectHours || {}).filter(([_, h]) => h > 0).map(([sub, h]) => (
+                                                    <span key={sub} className="bg-white border text-[11px] px-1.5 py-0.5 rounded text-gray-700">{sub}: <b className="text-blue-600">{h}</b></span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Printable Summary Table (Hidden on screen, shown in print) */}
+                            <div className="hidden print:block w-full">
+                                <div className="text-center mb-6">
+                                    <h1 className="text-2xl font-bold mb-2 font-khmer-muol">តារាងសង្ខេបកម្រិតថ្នាក់ និងចំនួនម៉ោងបង្រៀន</h1>
+                                    <h2 className="text-lg font-bold text-gray-700">សរុបមានចំនួន {classes.length} ថ្នាក់</h2>
+                                </div>
+                                <table className="w-full text-sm text-center border-collapse border border-gray-800 print-border-black">
+                                    <thead>
+                                        <tr className="bg-gray-200">
+                                            <th className="border border-gray-800 p-2 w-12">ល.រ</th>
+                                            <th className="border border-gray-800 p-2 w-20">ថ្នាក់</th>
+                                            <th className="border border-gray-800 p-2 w-32">កម្រិត</th>
+                                            <th className="border border-gray-800 p-2 w-20">សិស្ស</th>
+                                            <th className="border border-gray-800 p-2 w-24">ម៉ោងសរុប</th>
+                                            <th className="border border-gray-800 p-2 text-left">មុខវិជ្ជា និងចំនួនម៉ោង</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {classes.map((c, i) => (
+                                            <tr key={c.id}>
+                                                <td className="border border-gray-800 p-2">{i + 1}</td>
+                                                <td className="border border-gray-800 p-2 font-bold">{c.name}</td>
+                                                <td className="border border-gray-800 p-2">{c.level}</td>
+                                                <td className="border border-gray-800 p-2">{c.studentsCount}</td>
+                                                <td className="border border-gray-800 p-2 font-bold">{Object.values(c.subjectHours || {}).reduce((a,b)=>a+b,0)}</td>
+                                                <td className="border border-gray-800 p-2 text-left text-xs leading-relaxed">
+                                                    {Object.entries(c.subjectHours || {}).filter(([_, h]) => h > 0).map(([sub, h]) => `${sub}(${h})`).join(', ')}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ================= Schedule Viewer Components =================
+        function ScheduleViewer({ classes, teachers, schedules, generateSchedule, schoolProfile }) {
+            const [viewType, setViewType] = useState('class'); // 'class', 'teacher', 'master'
+            const [selectedClassId, setSelectedClassId] = useState(classes.length > 0 ? classes[0].id : null);
+            const [selectedTeacherId, setSelectedTeacherId] = useState(teachers && teachers.length > 0 ? teachers[0].id : null);
+            const [selectedMasterDay, setSelectedMasterDay] = useState(DAYS[0]);
+
+            useEffect(() => {
+                if (classes.length > 0 && !classes.find(c => c.id === selectedClassId)) {
+                    setSelectedClassId(classes[0].id);
+                }
+            }, [classes, selectedClassId]);
+
+            useEffect(() => {
+                if (teachers && teachers.length > 0 && !teachers.find(t => t.id === selectedTeacherId)) {
+                    setSelectedTeacherId(teachers[0].id);
+                }
+            }, [teachers, selectedTeacherId]);
+
+            if (classes.length === 0) {
+                return (
+                    <div className="bg-white p-10 rounded-xl shadow-sm border border-gray-100 text-center flex flex-col items-center justify-center min-h-[60vh]">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-16 h-16 text-gray-300 mb-4"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                        <h3 className="text-xl font-bold text-gray-700 mb-2">មិនទាន់មានថ្នាក់រៀនទេ</h3>
+                        <p className="text-gray-500">សូមចូលទៅកាន់ម៉ឺនុយ "ថ្នាក់រៀន" ដើម្បីបង្កើតថ្នាក់ជាមុនសិន។</p>
+                    </div>
+                );
+            }
+
+            const activeClass = classes.find(c => c.id === selectedClassId);
+            const activeTeacher = teachers?.find(t => t.id === selectedTeacherId);
+            
+            const isScheduleEmpty = Object.keys(schedules).length === 0;
+
+            const getTeacherCell = (tId, day, slotId) => {
+                if (!schedules) return null;
+                for (const classId in schedules) {
+                    const cell = schedules[classId][day]?.[slotId];
+                    if (cell && cell.teacherId === tId) {
+                        const cls = classes.find(c => c.id === classId);
+                        return { subject: cell.subject, className: cls ? cls.name : 'Unknown' };
+                    }
+                }
+                return null;
+            };
+
+            const isMasterMorning = selectedMasterDay.includes('ព្រឹក');
+            const masterSlots = SLOTS.filter(s => s.type === (isMasterMorning ? 'Morning' : 'Afternoon'));
+
+            // Calculate total teaching hours for selected teacher
+            let teacherTotalHours = 0;
+            if (viewType === 'teacher' && schedules && activeTeacher) {
+                for (const classId in schedules) {
+                    for (const day in schedules[classId]) {
+                        for (const slotId in schedules[classId][day]) {
+                            if (schedules[classId][day][slotId].teacherId === activeTeacher.id) {
+                                teacherTotalHours++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Calculate total teaching hours for selected class
+            let classTotalHours = 0;
+            if (viewType === 'class' && schedules && activeClass) {
+                const classSched = schedules[activeClass.id];
+                if (classSched) {
+                    for (const day in classSched) {
+                        classTotalHours += Object.keys(classSched[day] || {}).length;
+                    }
+                }
+            }
+
+            return (
+                <div className="bg-white p-5 sm:p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden print-overflow-visible print:border-none print:shadow-none print:p-0" style={{maxHeight: 'calc(100vh - 120px)'}}>
+                    {/* Header Controls */}
+                    <div className="flex flex-col xl:flex-row justify-between items-center mb-6 border-b pb-4 gap-4 no-print shrink-0">
+                        <div className="flex gap-2 bg-gray-100 p-1.5 rounded-lg w-full xl:w-auto">
+                            <button onClick={() => setViewType('class')} className={`flex-1 xl:flex-none px-4 py-2 rounded-md font-bold text-sm transition-colors ${viewType === 'class' ? 'bg-white text-blue-800 shadow-sm' : 'text-gray-600 hover:text-blue-600 hover:bg-gray-200'}`}>តាមថ្នាក់</button>
+                            <button onClick={() => setViewType('teacher')} className={`flex-1 xl:flex-none px-4 py-2 rounded-md font-bold text-sm transition-colors ${viewType === 'teacher' ? 'bg-white text-blue-800 shadow-sm' : 'text-gray-600 hover:text-blue-600 hover:bg-gray-200'}`}>តាមគ្រូ</button>
+                            <button onClick={() => setViewType('master')} className={`flex-1 xl:flex-none px-4 py-2 rounded-md font-bold text-sm transition-colors ${viewType === 'master' ? 'bg-white text-blue-800 shadow-sm' : 'text-gray-600 hover:text-blue-600 hover:bg-gray-200'}`}>តារាងរួម</button>
+                        </div>
+
+                        <div className="flex flex-wrap gap-3 w-full xl:w-auto justify-center xl:justify-end">
+                            {viewType === 'class' && (
+                                <select value={selectedClassId || ''} onChange={e => setSelectedClassId(e.target.value)} className="border-2 border-blue-200 p-2 rounded-lg bg-blue-50 font-bold focus:border-blue-500 focus:ring-0 text-blue-800">
+                                    {classes.map(c => <option key={c.id} value={c.id}>ថ្នាក់ទី {c.name}</option>)}
+                                </select>
+                            )}
+                            {viewType === 'teacher' && (
+                                <select value={selectedTeacherId || ''} onChange={e => setSelectedTeacherId(e.target.value)} className="border-2 border-blue-200 p-2 rounded-lg bg-blue-50 font-bold focus:border-blue-500 focus:ring-0 text-blue-800">
+                                    {teachers?.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                </select>
+                            )}
+                            {viewType === 'master' && (
+                                <select value={selectedMasterDay || ''} onChange={e => setSelectedMasterDay(e.target.value)} className="border-2 border-blue-200 p-2 rounded-lg bg-blue-50 font-bold focus:border-blue-500 focus:ring-0 text-blue-800">
+                                    {DAYS.map(d => <option key={d} value={d}>{d}</option>)}
+                                </select>
+                            )}
+                            
+                            <button onClick={generateSchedule} className="bg-blue-600 text-white px-5 py-2 rounded-lg font-bold shadow-md hover:bg-blue-700 transition-colors flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                បង្កើត (Auto)
+                            </button>
+                            <button onClick={() => window.print()} className="bg-gray-800 text-white px-4 py-2 rounded-lg font-bold shadow-md hover:bg-gray-900 transition-colors flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5"><path strokeLinecap="round" strokeLinejoin="round" d="M6.728 3.478a.75.75 0 00-.728.75v3.75m12-4.5a.75.75 0 00-.728-.75h-10.5M21 10.5a.75.75 0 00-.75-.75h-16.5a.75.75 0 00-.75.75v6a.75.75 0 00.75.75h3v3a.75.75 0 00.75.75h10.5a.75.75 0 00.75-.75v-3h3a.75.75 0 00.75-.75v-6zM15 16.5H9v-3h6v3z" /></svg>
+                                បោះពុម្ព
+                            </button>
+                        </div>
+                    </div>
+
+                    {isScheduleEmpty ? (
+                        <div className="flex-1 flex items-center justify-center text-gray-500 border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 p-10 text-center">
+                            <div>
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-16 h-16 mx-auto mb-4 text-gray-300"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>
+                                <p>មិនទាន់មានកាលវិភាគត្រូវបានបង្កើតទេ។<br/>សូមចុចប៊ូតុង "បង្កើត (Auto)"។</p>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="overflow-auto flex-1 custom-scrollbar print-overflow-visible">
+                            
+                            {/* Class View */}
+                            {viewType === 'class' && (
+                                <>
+                                    {/* Print Header */}
+                                    <div className="hidden print:block mb-6 text-sm">
+                                        <div className="flex justify-between items-start">
+                                            <div className="text-center font-khmer-muol">
+                                                <div>ក្រសួងអប់រំ យុវជន និងកីឡា</div>
+                                                <div>{schoolProfile.department}</div>
+                                                <div className="text-base mt-1">{schoolProfile.name}</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="font-khmer-muol text-lg">ព្រះរាជាណាចក្រកម្ពុជា</div>
+                                                <div className="font-khmer-muol">ជាតិ សាសនា ព្រះមហាក្សត្រ</div>
+                                            </div>
+                                        </div>
+                                        <div className="text-center font-bold text-xl my-5 font-khmer-muol">កាលវិភាគប្រចាំសប្តាហ៍ ឆ្នាំសិក្សា {schoolProfile.academicYear}</div>
+                                        <div className="flex justify-center gap-10 mb-3 text-base">
+                                            <div>ថ្នាក់ទី៖ <b>{activeClass?.name}</b></div>
+                                            <div>កម្រិត៖ <b>{activeClass?.level}</b></div>
+                                        </div>
+                                    </div>
+
+                                    <table className="w-full text-sm text-center border-collapse border border-gray-800 bg-white print-border-black min-w-[800px] print:min-w-0">
+                                        <thead>
+                                            <tr>
+                                                <th className="border border-gray-800 p-2 font-bold w-24 print:bg-transparent bg-gray-100">ម៉ោង</th>
+                                                {WEEK_DAYS.map(d => <th key={d} className="border border-gray-800 p-2 font-bold w-32 print:bg-transparent bg-gray-100">{d}</th>)}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td colSpan={7} className="border border-gray-800 p-1.5 font-bold print:bg-transparent bg-gray-50 font-khmer-muol">ពេលព្រឹក</td>
+                                            </tr>
+                                            {MORNING_SLOTS.map((slot) => (
+                                                <tr key={slot.id} className="hover:bg-gray-50 print:hover:bg-transparent">
+                                                    <td className="border border-gray-800 p-2 font-bold">{slot.time}</td>
+                                                    {WEEK_DAYS.map(day => {
+                                                        const dayKey = `${day} - ព្រឹក`;
+                                                        const cell = schedules[selectedClassId] && schedules[selectedClassId][dayKey] ? schedules[selectedClassId][dayKey][slot.id] : null;
+                                                        
+                                                        return (
+                                                            <td key={day} className="border border-gray-800 p-2 h-14">
+                                                                {cell ? (
+                                                                    <div className="flex flex-col items-center justify-center">
+                                                                        <span className="font-bold text-gray-800">{cell.subject}</span>
+                                                                        <span className="text-blue-700 print:text-black text-xs mt-1">
+                                                                            {cell.teacherName}
+                                                                            {cell.isOvertime && <span className="text-red-500 print:text-black font-bold ml-0.5">*</span>}
+                                                                        </span>
+                                                                    </div>
+                                                                ) : ''}
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            ))}
+                                            <tr>
+                                                <td colSpan={7} className="border border-gray-800 p-1.5 font-bold print:bg-transparent bg-gray-50 font-khmer-muol">ពេលរសៀល</td>
+                                            </tr>
+                                            {AFTERNOON_SLOTS.map((slot) => (
+                                                <tr key={slot.id} className="hover:bg-gray-50 print:hover:bg-transparent">
+                                                    <td className="border border-gray-800 p-2 font-bold">{slot.time}</td>
+                                                    {WEEK_DAYS.map(day => {
+                                                        const dayKey = `${day} - ល្ងាច`;
+                                                        const cell = schedules[selectedClassId] && schedules[selectedClassId][dayKey] ? schedules[selectedClassId][dayKey][slot.id] : null;
+                                                        
+                                                        return (
+                                                            <td key={day} className="border border-gray-800 p-2 h-14">
+                                                                {cell ? (
+                                                                    <div className="flex flex-col items-center justify-center">
+                                                                        <span className="font-bold text-gray-800">{cell.subject}</span>
+                                                                        <span className="text-blue-700 print:text-black text-xs mt-1">
+                                                                            {cell.teacherName}
+                                                                            {cell.isOvertime && <span className="text-red-500 print:text-black font-bold ml-0.5">*</span>}
+                                                                        </span>
+                                                                    </div>
+                                                                ) : ''}
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                    
+                                    {/* Print Footer */}
+                                    <div className="mt-8 justify-between text-sm hidden print:flex">
+                                        <div className="text-center w-1/3">
+                                            <div className="mb-12 font-bold">បានឃើញ និងឯកភាព<br/>នាយកសាលា</div>
+                                        </div>
+                                        <div className="text-left w-1/3 flex flex-col gap-2 pt-4 pl-4">
+                                            <div>ចំនួនម៉ោងរៀនសរុប៖ ..... <b>{classTotalHours}</b> ..... ម៉ោង</div>
+                                        </div>
+                                        <div className="text-center w-1/3">
+                                            <div>កូប, ថ្ងៃទី...........ខែ...........ឆ្នាំ២០២....</div>
+                                            <div className="mb-12 mt-1 font-bold">ហត្ថលេខាគ្រូបន្ទុកថ្នាក់</div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {/* Teacher View */}
+                            {viewType === 'teacher' && (
+                                <>
+                                    {/* Print Header */}
+                                    <div className="hidden print:block mb-6 text-sm">
+                                        <div className="flex justify-between items-start">
+                                            <div className="text-center font-khmer-muol">
+                                                <div>ក្រសួងអប់រំ យុវជន និងកីឡា</div>
+                                                <div>{schoolProfile.department}</div>
+                                                <div className="text-base mt-1">{schoolProfile.name}</div>
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="font-khmer-muol text-lg">ព្រះរាជាណាចក្រកម្ពុជា</div>
+                                                <div className="font-khmer-muol">ជាតិ សាសនា ព្រះមហាក្សត្រ</div>
+                                            </div>
+                                        </div>
+                                        <div className="text-center font-bold text-xl my-5 font-khmer-muol">កាលវិភាគប្រចាំសប្តាហ៍ ឆ្នាំសិក្សា {schoolProfile.academicYear}</div>
+                                        
+                                        <div className="flex items-center gap-8 mb-2">
+                                            <div>របស់លោក/លោកស្រី៖ <b className="text-base">{activeTeacher?.name}</b></div>
+                                            <div>តួនាទី-ភារកិច្ច៖ <b className="text-base">បង្រៀន</b></div>
+                                        </div>
+                                        <div className="flex items-center gap-8 mb-3">
+                                            <div>ឯកទេស៖ <b>{activeTeacher?.subjects?.join(', ')}</b></div>
+                                            <div>បង្រៀនថ្នាក់៖ <b>{activeTeacher?.allowedClasses?.length > 0 ? activeTeacher.allowedClasses.map(id => classes.find(c=>c.id===id)?.name).join(', ') : 'គ្រប់ថ្នាក់'}</b></div>
+                                        </div>
+                                    </div>
+
+                                    <table className="w-full text-sm text-center border-collapse border border-gray-800 bg-white print-border-black min-w-[800px] print:min-w-0">
+                                        <thead>
+                                            <tr>
+                                                <th className="border border-gray-800 p-2 font-bold w-24 print:bg-transparent bg-green-100">ម៉ោង</th>
+                                                {WEEK_DAYS.map(d => <th key={d} className="border border-gray-800 p-2 font-bold w-32 print:bg-transparent bg-green-100">{d}</th>)}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td colSpan={7} className="border border-gray-800 p-1.5 font-bold print:bg-transparent bg-green-50 font-khmer-muol">ពេលព្រឹក</td>
+                                            </tr>
+                                            {MORNING_SLOTS.map((slot) => (
+                                                <tr key={slot.id} className="hover:bg-gray-50 print:hover:bg-transparent">
+                                                    <td className="border border-gray-800 p-2 font-bold">{slot.time}</td>
+                                                    {WEEK_DAYS.map(day => {
+                                                        const dayKey = `${day} - ព្រឹក`;
+                                                        const cell = getTeacherCell(selectedTeacherId, dayKey, slot.id);
+                                                        
+                                                        return (
+                                                            <td key={day} className="border border-gray-800 p-2 h-14">
+                                                                {cell ? (
+                                                                    <div className="flex flex-col items-center justify-center">
+                                                                        <span className="font-bold text-gray-800">{cell.subject}</span>
+                                                                        <span className="text-green-700 print:text-black font-bold text-xs mt-1">
+                                                                            ថ្នាក់ទី {cell.className}
+                                                                        </span>
+                                                                    </div>
+                                                                ) : ''}
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            ))}
+                                            <tr>
+                                                <td colSpan={7} className="border border-gray-800 p-1.5 font-bold print:bg-transparent bg-green-50 font-khmer-muol">ពេលរសៀល</td>
+                                            </tr>
+                                            {AFTERNOON_SLOTS.map((slot) => (
+                                                <tr key={slot.id} className="hover:bg-gray-50 print:hover:bg-transparent">
+                                                    <td className="border border-gray-800 p-2 font-bold">{slot.time}</td>
+                                                    {WEEK_DAYS.map(day => {
+                                                        const dayKey = `${day} - ល្ងាច`;
+                                                        const cell = getTeacherCell(selectedTeacherId, dayKey, slot.id);
+                                                        
+                                                        return (
+                                                            <td key={day} className="border border-gray-800 p-2 h-14">
+                                                                {cell ? (
+                                                                    <div className="flex flex-col items-center justify-center">
+                                                                        <span className="font-bold text-gray-800">{cell.subject}</span>
+                                                                        <span className="text-green-700 print:text-black font-bold text-xs mt-1">
+                                                                            ថ្នាក់ទី {cell.className}
+                                                                        </span>
+                                                                    </div>
+                                                                ) : ''}
+                                                            </td>
+                                                        );
+                                                    })}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+
+                                    {/* Print Footer */}
+                                    <div className="mt-8 justify-between text-sm hidden print:flex">
+                                        <div className="text-center w-1/3">
+                                            <div className="mb-12 font-bold">បានឃើញ និងឯកភាព<br/>នាយកសាលា</div>
+                                        </div>
+                                        <div className="text-left w-1/3 flex flex-col gap-2 pt-4 pl-4">
+                                            <div>ចំនួនម៉ោងបង្រៀនសរុប៖ ..... <b>{teacherTotalHours}</b> ..... ម៉ោង</div>
+                                            <div>ចំនួនម៉ោងកំណត់៖ ..... <b>{activeTeacher?.maxHours || 20}</b> ..... ម៉ោង</div>
+                                            <div>ចំនួនម៉ោងបន្ថែម៖ ..... <b>{Math.max(0, teacherTotalHours - (activeTeacher?.maxHours || 20))}</b> ..... ម៉ោង</div>
+                                        </div>
+                                        <div className="text-center w-1/3">
+                                            <div>កូប, ថ្ងៃទី...........ខែ...........ឆ្នាំ២០២....</div>
+                                            <div className="mb-12 mt-1 font-bold">ហត្ថលេខា-សាមីខ្លួន</div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {/* Master View (Keep it horizontal as before for better viewing of all classes) */}
+                            {viewType === 'master' && (
+                                <>
+                                    <div className="text-center mb-4 hidden print:block">
+                                        <h1 className="text-2xl font-bold mb-1 font-khmer-muol">តារាងកាលវិភាគរួម (គ្រប់ថ្នាក់)</h1>
+                                        <h2 className="text-lg font-bold text-gray-600">ថ្ងៃ៖ {selectedMasterDay}</h2>
+                                    </div>
+                                    <table className="w-full text-sm text-center border-collapse min-w-[600px] bg-white print-border-black">
+                                        <thead>
+                                            <tr>
+                                                <th className="border border-gray-800 p-3 bg-purple-100 text-purple-900 font-bold w-32 sticky left-0 z-10 print:bg-transparent">ថ្នាក់រៀន \ ម៉ោង</th>
+                                                {masterSlots.map(s => <th key={s.id} className="border border-gray-800 p-3 font-bold bg-gray-100 text-gray-800 print:bg-transparent">{s.name.replace('ម៉ោង ','')}</th>)}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {classes.map(cls => {
+                                                const scheduleForClass = schedules[cls.id] || {};
+                                                const daySchedule = scheduleForClass[selectedMasterDay] || {};
+                                                
+                                                return (
+                                                    <tr key={cls.id} className="hover:bg-gray-50 print:hover:bg-transparent">
+                                                        <td className="border border-gray-800 p-3 font-bold bg-gray-50 text-gray-800 sticky left-0 z-10 print:bg-transparent">ថ្នាក់ {cls.name}</td>
+                                                        {masterSlots.map(slot => {
+                                                            const cell = daySchedule[slot.id];
+                                                            return (
+                                                                <td key={slot.id} className={`border border-gray-800 p-2 ${cell ? 'bg-indigo-50 print:bg-transparent' : ''}`}>
+                                                                    {cell ? (
+                                                                        <div className="flex flex-col items-center justify-center">
+                                                                            <span className="font-bold text-gray-800 mb-1">{cell.subject}</span>
+                                                                            <span className="text-blue-700 print:text-black text-[11px] font-bold">
+                                                                                {cell.teacherName}
+                                                                            </span>
+                                                                        </div>
+                                                                    ) : (
+                                                                        <span className="text-gray-300 print:text-white">-</span>
+                                                                    )}
+                                                                </td>
+                                                            );
+                                                        })}
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </>
+                            )}
+                            
+                            <div className="mt-4 text-xs text-gray-500 flex gap-4 no-print border-t pt-3">
+                                {viewType === 'class' && <span className="flex items-center gap-1 bg-red-50 px-2 py-1 rounded border border-red-100"><span className="text-red-500 font-bold text-base leading-none">*</span> គ្រូបង្រៀនលើសម៉ោងអតិបរមា (Overtime)</span>}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
